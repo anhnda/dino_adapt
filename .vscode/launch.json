@@ -1,0 +1,31 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Debug train.py (Conda: rtdetr)",
+      "type": "python",
+      "request": "launch",
+      "python": "/home/anhnda/.conda/envs/rtdert/bin/python",
+      "program": "${workspaceFolder}/main.py",
+      // "args": [
+      //   "-c", "configs/rtdetr/rtdetr_r18vd_6x_coco.yml"
+      // ],
+      "args":[
+        "--output_dir", "logs/DINO/R50-MS4",
+        "-c", "config/DINO/DINO_4scale.py",
+        "--coco_path", "/data/coco",
+        "--eval", "--resume", "checkpoint0011_4scale.pth",
+        "--options", "dn_scalar=100", "embed_init_tgt=TRUE",
+        "dn_label_coef=1.0", "dn_bbox_coef=1.0", "use_ema=False",
+        "dn_box_noise_scale=1.0"
+      ],
+      "cwd": "${workspaceFolder}",
+      "console": "integratedTerminal",
+      "internalConsoleOptions": "openOnSessionStart",
+      "justMyCode": false,
+      "env": {
+          "PYDEVD_WARN_SLOW_RESOLVE_TIMEOUT": "30"
+      }
+    }
+  ]
+}
