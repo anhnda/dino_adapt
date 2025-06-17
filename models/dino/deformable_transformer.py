@@ -400,7 +400,7 @@ class DeformableTransformer(nn.Module):
         #########################################################
         # Begin Decoder
         #########################################################
-        hs, references = self.decoder(
+        hs, references, seqs = self.decoder(
                 tgt=tgt.transpose(0, 1), 
                 memory=memory.transpose(0, 1), 
                 memory_key_padding_mask=mask_flatten, 
@@ -435,7 +435,7 @@ class DeformableTransformer(nn.Module):
         # ref_enc: (n_enc+1, bs, nq, query_dim) or (1, bs, nq, query_dim) or (n_enc, bs, nq, d_model) or None
         #########################################################        
 
-        return hs, references, hs_enc, ref_enc, init_box_proposal
+        return hs, references, hs_enc, ref_enc, init_box_proposal, seqs
         # hs: (n_dec, bs, nq, d_model)
         # references: sigmoid coordinates. (n_dec+1, bs, bq, 4)
         # hs_enc: (n_enc+1, bs, nq, d_model) or (1, bs, nq, d_model) or None
@@ -700,20 +700,21 @@ class TransformerDecoder(nn.Module):
         intermediate = []
         reference_points = refpoints_unsigmoid.sigmoid()
         #reference_points = reference_points[:250]
-        #ref_points = [reference_points]  
+        # ref_points = [reference_points]  
         ref_points = []
         C, BZ, _ = tgt.shape
         seqs = torch.tensor([C] * BZ, dtype = torch.long, device = tgt.device)
+        #tt = 200
         for layer_id, layer in enumerate(self.layers):
             if self.infer_adapt:
                 seqs_o = seqs.clone()
                 tt = hash_v(torch.max(seqs))
-                reference_points = reference_points[:tt]
-                output = output[:tt]
+                if type(tt) == torch.Tensor:
+                    tt = int(tt)
+                reference_points = reference_points[:tt].contiguous()
+                output = output[:tt].contiguous()
                 self.total_layers += tt/len(self.layers)
-                if layer_id==len(self.layers) - 1:
-                    self.total_last_layer += tt
-                    self.n_call += 1
+
             else:
                 tt = C
                 self.total_layers += tt/len(self.layers)
@@ -772,15 +773,18 @@ class TransformerDecoder(nn.Module):
                     self_attn_mask = tgt_mask,
                     cross_attn_mask = memory_mask
                 )
+            class_unselected = self.class_embed[layer_id](output)
+            class_logits, _ = class_unselected.max(-1)
             if self.infer_adapt:
-                class_unselected = self.class_embed[layer_id](output)
-                class_logits, _ = class_unselected.max(-1)
+
                 class_logits = class_logits.transpose(1,0)
                 seqs = get_k_tensor_constrained(class_logits, seqs, self.offset, self.lag, self.alpha, self.beta, self.gamma)
                 if layer_id < len(self.layers) - 1:
-                    seqs = torch.minimum(seqs+80, seqs_o)
-
-
+                    seqs = torch.minimum(seqs+self.offset+self.lag, seqs_o)
+                else:
+                    tt = max(seqs)
+                    self.total_last_layer += tt
+                    self.n_call += 1
             # iter update
             if self.bbox_embed is not None:
                 reference_before_sigmoid = inverse_sigmoid(reference_points)
@@ -813,10 +817,9 @@ class TransformerDecoder(nn.Module):
         ref_points.append(ref_points[-1])
         r1 = [itm_out.transpose(0, 1) for itm_out in intermediate]
         r2 = [itm_refpoint.transpose(0, 1) for itm_refpoint in ref_points]
-        return [r1
-            ,
-            r2
-        ]
+        if not self.infer_adapt:
+            seqs = None
+        return [r1 ,r2, seqs]
 
 class DeformableTransformerEncoderLayer(nn.Module):
     def __init__(self,

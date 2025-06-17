@@ -267,7 +267,7 @@ class DINO(nn.Module):
             assert targets is None
             input_query_bbox = input_query_label = attn_mask = dn_meta = None
 
-        hs, reference, hs_enc, ref_enc, init_box_proposal = self.transformer(srcs, masks, input_query_bbox, poss,input_query_label,attn_mask)
+        hs, reference, hs_enc, ref_enc, init_box_proposal, seqs = self.transformer(srcs, masks, input_query_bbox, poss,input_query_label,attn_mask)
         # In case num object=0
         hs[0] += self.label_enc.weight[0,0]*0.0
 
@@ -287,7 +287,7 @@ class DINO(nn.Module):
             outputs_class, outputs_coord_list = \
                 dn_post_process(outputs_class, outputs_coord_list,
                                 dn_meta,self.aux_loss,self._set_aux_loss)
-        out = {'pred_logits': outputs_class[-1], 'pred_boxes': outputs_coord_list[-1]}
+        out = {'pred_logits': outputs_class[-1], 'pred_boxes': outputs_coord_list[-1], 'seqs' : seqs}
         # if self.aux_loss:
         #     out['aux_outputs'] = self._set_aux_loss(outputs_class, outputs_coord_list)
 
@@ -654,6 +654,8 @@ class PostProcess(nn.Module):
         """
         num_select = self.num_select
         out_logits, out_bbox = outputs['pred_logits'], outputs['pred_boxes']
+        seqs = outputs['seqs']
+        num_select = min(num_select, out_logits[0].shape[0])
 
         assert len(out_logits) == len(target_sizes)
         assert target_sizes.shape[1] == 2
@@ -683,7 +685,11 @@ class PostProcess(nn.Module):
 
             results = [{'scores': s[i], 'labels': l[i], 'boxes': b[i]} for s, l, b, i in zip(scores, labels, boxes, item_indices)]
         else:
-            results = [{'scores': s, 'labels': l, 'boxes': b} for s, l, b in zip(scores, labels, boxes)]
+            if seqs is not None:
+                results = [{'scores': s[:i], 'labels': l[:i], 'boxes': b[:i]} for s, l, b,i in zip(scores, labels, boxes, seqs)]
+
+            else:
+                results = [{'scores': s, 'labels': l, 'boxes': b} for s, l, b in zip(scores, labels, boxes)]
 
         return results
 

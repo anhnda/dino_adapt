@@ -13,7 +13,7 @@ from torch import nn
 import torch
 
 
-def get_k_tensor_constrained(ar, sub_seq, offset=40, lag=40, alpha=1, beta=0.4, gamma=2):
+def get_k_tensor_constrained(ar, sub_seq, offset=40, lag=40, alpha=1, beta=0.4, gamma=2, step=10):
     """
     Zero-warning ONNX version. Requires sub_seq to be a tensor for tracing.
     Call this version during ONNX export to eliminate all warnings.
@@ -25,16 +25,17 @@ def get_k_tensor_constrained(ar, sub_seq, offset=40, lag=40, alpha=1, beta=0.4, 
     # return torch.tensor([100] * batch_size, device = device)
 
     # Assume sub_seq is already a tensor (no conversion during tracing)
-    # sub_seq = sub_seq.to(device)
+    sub_seq = sub_seq.to(device)
 
     # Calculate per-sequence k ranges
     k_end_global = N - offset - lag
+
     k_end_per_seq = sub_seq - lag
-    k_end_per_seq = torch.clamp(k_end_per_seq, max=k_end_global)
+    k_end_per_seq = torch.clamp(k_end_per_seq.to(device), max=int(k_end_global)).to(device)
 
     # Use fixed maximum range to avoid dynamic operations
     max_possible_k = N - offset - lag
-    k_range = torch.arange(offset, max_possible_k, device=device, dtype=torch.long)
+    k_range = torch.arange(offset, max_possible_k, step=step, device=device, dtype=torch.long)
     
     # Create masks without control flow
     k_range_expanded = k_range.unsqueeze(0)

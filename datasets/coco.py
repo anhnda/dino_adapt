@@ -485,7 +485,7 @@ def make_coco_transforms(image_set, fix_size=False, strong_aug=False, args=None)
         'scales2_resize': scales2_resize,
         'scales2_crop': scales2_crop
     }
-    print("data_aug_params:", json.dumps(datadict_for_print, indent=2))
+    #print("data_aug_params:", json.dumps(datadict_for_print, indent=2))
         
 
     if image_set == 'train':

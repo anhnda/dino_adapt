@@ -113,6 +113,7 @@ use_detached_boxes_dec_out = False
 
 infer_adapt = True
 offset = 40
+lag = 40
 alpha = 1.0
 beta = 0.4
 gamma = 2.0

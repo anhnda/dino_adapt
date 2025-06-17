@@ -15,7 +15,7 @@ import torch
 import util.misc as utils
 from datasets.coco_eval import CocoEvaluator
 from datasets.panoptic_eval import PanopticEvaluator
-
+import time
 
 def train_one_epoch(model: torch.nn.Module, criterion: torch.nn.Module,
                     data_loader: Iterable, optimizer: torch.optim.Optimizer,
@@ -155,19 +155,28 @@ def evaluate(model, criterion, postprocessors, data_loader, base_ds, device, out
 
     _cnt = 0
     output_state_dict = {} # for debug only
+    cc = -1
+    mx = 10000
+    forward_time = 0
+    eval_time = 0
     for samples, targets in metric_logger.log_every(data_loader, 10, header, logger=logger):
+        cc += 1
+        if cc == mx:
+            break
         samples = samples.to(device)
 
         # targets = [{k: v.to(device) for k, v in t.items()} for t in targets]
         targets = [{k: to_device(v, device) for k, v in t.items()} for t in targets]
-
+        torch.cuda.synchronize()
+        start_t = time.time()
         with torch.cuda.amp.autocast(enabled=args.amp):
             if need_tgt_for_training:
                 outputs = model(samples, targets)
             else:
                 outputs = model(samples)
             # outputs = model(samples)
-
+        torch.cuda.synchronize()
+        forward_time += time.time() - start_t
         #     loss_dict = criterion(outputs, targets)
         # weight_dict = criterion.weight_dict
 
@@ -184,6 +193,7 @@ def evaluate(model, criterion, postprocessors, data_loader, base_ds, device, out
         #     metric_logger.update(class_error=loss_dict_reduced['class_error'])
 
         orig_target_sizes = torch.stack([t["orig_size"] for t in targets], dim=0)
+        start_t = time.time()
         results = postprocessors['bbox'](outputs, orig_target_sizes)
         # [scores: [100], labels: [100], boxes: [100, 4]] x B
         if 'segm' in postprocessors.keys():
@@ -193,7 +203,7 @@ def evaluate(model, criterion, postprocessors, data_loader, base_ds, device, out
 
         if coco_evaluator is not None:
             coco_evaluator.update(res)
-
+        eval_time += time.time() - start_t
         if panoptic_evaluator is not None:
             res_pano = postprocessors["panoptic"](outputs, target_sizes, orig_target_sizes)
             for i, target in enumerate(targets):
@@ -274,10 +284,13 @@ def evaluate(model, criterion, postprocessors, data_loader, base_ds, device, out
         panoptic_evaluator.synchronize_between_processes()
 
     # accumulate predictions from all images
+    start_t = time.time()
     if coco_evaluator is not None:
         coco_evaluator.accumulate()
         coco_evaluator.summarize()
-        
+    eval_time += time.time() - start_t
+    print("Total forward: ", forward_time)
+    print("Total eval: ", eval_time)  
     panoptic_res = None
     if panoptic_evaluator is not None:
         panoptic_res = panoptic_evaluator.summarize()

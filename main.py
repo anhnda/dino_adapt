@@ -124,7 +124,7 @@ def main(args):
     logger.info('world size: {}'.format(args.world_size))
     logger.info('rank: {}'.format(args.rank))
     logger.info('local_rank: {}'.format(args.local_rank))
-    logger.info("args: " + str(args) + '\n')
+    #logger.info("args: " + str(args) + '\n')
 
 
     if args.frozen_weights is not None:
@@ -156,7 +156,7 @@ def main(args):
         model_without_ddp = model.module
     n_parameters = sum(p.numel() for p in model.parameters() if p.requires_grad)
     logger.info('number of params:'+str(n_parameters))
-    logger.info("params:\n"+json.dumps({n: p.numel() for n, p in model.named_parameters() if p.requires_grad}, indent=2))
+    #logger.info("params:\n"+json.dumps({n: p.numel() for n, p in model.named_parameters() if p.requires_grad}, indent=2))
 
     param_dicts = get_param_dict(args, model_without_ddp)
 
