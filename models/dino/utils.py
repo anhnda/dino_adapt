@@ -11,9 +11,88 @@ import math
 import torch.nn.functional as F
 from torch import nn
 import torch
+def get_k_tensor_constrained(ar, sub_seq, offset=20, lag=10, alpha=1, beta=0.4, gamma=0.4):
+    batch_size, N = ar.shape
+    device = ar.device
+
+    # -------- constraints: offset at start, lag after k (NO offset at the end) --------
+    # global ceiling for k (exclusive in arange): k ∈ [offset, N - lag)
+    k_end_global = N - lag
+    if k_end_global <= offset:
+        # no valid k => return the per-seq cap (same dtype/device, ONNX-safe)
+        return sub_seq.clone()
+
+    # per-sample ceiling (exclusive): k < sub_seq - lag
+    k_end_per_seq = torch.clamp(sub_seq - lag, max=k_end_global)
+
+    # fixed global k-grid (ONNX-friendly)
+    # arange end is exclusive, so this yields k ∈ {offset, ..., (N - lag) - 1}
+    max_possible_k = N - lag
+    k_range = torch.arange(offset, max_possible_k, device=device, dtype=torch.long)
+
+    # ---------------- the rest of your original code stays the same ----------------
+    k_range_expanded = k_range.unsqueeze(0)
+    k_end_expanded = k_end_per_seq.unsqueeze(1)
+    valid_k_mask = k_range_expanded < k_end_expanded
+
+    num_k = k_range.shape[0]
+    ar_expanded = ar.unsqueeze(1)
+    k_expanded = k_range.unsqueeze(0).unsqueeze(2)
+
+    indices = torch.arange(N, device=device, dtype=torch.long).unsqueeze(0).unsqueeze(0)
+    mask_A1 = indices < k_expanded
+    mask_A2 = indices >= (k_expanded + lag)
+
+    mask_A1 = mask_A1.expand(batch_size, num_k, N)
+    mask_A2 = mask_A2.expand(batch_size, num_k, N)
+    ar_broadcast = ar_expanded.expand(batch_size, num_k, N)
+
+    A1_lengths = mask_A1.sum(dim=2, keepdim=True)
+    x_coords = torch.arange(N, device=device, dtype=torch.float32).expand(batch_size, num_k, N)
+
+    zeros_float = torch.zeros_like(ar_broadcast)
+    A1_vals = torch.where(mask_A1, ar_broadcast, zeros_float)
+    A1_x = torch.where(mask_A1, x_coords, zeros_float)
+
+    k_start_vals = k_range.unsqueeze(0).expand(batch_size, num_k).float()
+    A1_x_adjusted = A1_x - k_start_vals.unsqueeze(2) * mask_A1.float()
+    A1_x_adjusted = torch.where(mask_A1, A1_x_adjusted, zeros_float)
+
+    n = A1_lengths.squeeze(2).float()
+    sum_x = A1_x_adjusted.sum(dim=2)
+    sum_y = A1_vals.sum(dim=2)
+    sum_xy = (A1_x_adjusted * A1_vals).sum(dim=2)
+    sum_x2 = (A1_x_adjusted ** 2).sum(dim=2)
+
+    eps = torch.full_like(sum_x2, 1e-10)
+    denom = torch.where((n * sum_x2 - sum_x ** 2).abs() < eps, eps, n * sum_x2 - sum_x ** 2)
+    slope_A1 = (n * sum_xy - sum_x * sum_y) / denom
+
+    A1_counts = mask_A1.sum(dim=2).float()
+    A2_counts = mask_A2.sum(dim=2).float()
+
+    A1_mean = A1_vals.sum(dim=2) / torch.clamp(A1_counts, min=1)
+    A1_vals_centered = A1_vals - A1_mean.unsqueeze(2) * mask_A1.float()
+    A1_var = (A1_vals_centered ** 2 * mask_A1.float()).sum(dim=2) / torch.clamp(A1_counts, min=1)
+
+    A2_vals = torch.where(mask_A2, ar_broadcast, zeros_float)
+    A2_mean = A2_vals.sum(dim=2) / torch.clamp(A2_counts, min=1)
+    A2_vals_centered = A2_vals - A2_mean.unsqueeze(2) * mask_A2.float()
+    A2_var = (A2_vals_centered ** 2 * mask_A2.float()).sum(dim=2) / torch.clamp(A2_counts, min=1)
+
+    scores = alpha * slope_A1.abs() + beta * A1_var - gamma * A2_var
+    neg_inf = torch.full_like(scores, -1e10)
+    scores = torch.where(valid_k_mask, scores, neg_inf)
+
+    best_indices = scores.argmax(dim=1)
+    best_k = k_range[best_indices]
+
+    result = best_k + lag
+    result = torch.clamp(result, max=sub_seq)  # ensure we don’t exceed per-seq boundary
+    return result
 
 
-def get_k_tensor_constrained(ar, sub_seq, offset=40, lag=40, alpha=1, beta=0.4, gamma=2, step=10):
+def get_k_tensor_constrained2(ar, sub_seq, offset=40, lag=40, alpha=1, beta=0.4, gamma=2, step=10):
     """
     Zero-warning ONNX version. Requires sub_seq to be a tensor for tracing.
     Call this version during ONNX export to eliminate all warnings.
